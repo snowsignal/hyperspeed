@@ -1,13 +1,14 @@
-# Hyperspeed Engine
+# Hyperspeed
 
-A multithreaded, networked, 2D game engine.
+A multithreaded, ECS-based game framework.
 
 ## Planned Features
 - Powerful and multithreaded ECS system using `specs`
-- Built-in components and functionality for lighting, tiling, and multiplayer networking
-- Lighting-fast TCP-based networking system
-- Powerful UI system
-- Cross-platform client written in Kotlin
+- Fast, safe, and parallel networking with `tokio`.
+- Write code in Rust, Python or Lua.
+- Run Rust code directly from Python or Lua scripts
+- Flexible and highly customizable for any use case.
+- Implement any network protocol you want.
 
 ### Credits
 Written by Jackson Lewis.

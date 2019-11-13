@@ -7,22 +7,12 @@ extern crate specs;
 extern crate shred_derive;
 #[macro_use]
 extern crate specs_derive;
-
 #[macro_use]
 extern crate cascade;
-extern crate serde;
+extern crate tokio;
 #[macro_use]
-extern crate serde_derive;
-extern crate bytes;
-extern crate serde_json;
+pub extern crate cpython;
 
-pub mod core;
-pub mod utils;
-pub mod systems;
-pub mod components;
-
-pub use specs::prelude::*;
-
-pub use self::core::*;
-
-pub use self::utils::*;
+pub mod network;
+pub mod ecs;
+pub mod script;

@@ -16,3 +16,6 @@ pub extern crate cpython;
 pub mod network;
 pub mod ecs;
 pub mod script;
+
+#[cfg(test)]
+mod tests;

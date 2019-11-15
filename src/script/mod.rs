@@ -5,9 +5,9 @@ use std::marker::PhantomData;
 use std::collections::HashMap;
 use std::hint::unreachable_unchecked;
 
-type InterpreterResult<T> = Result<T, String>;
+pub type InterpreterResult<T> = Result<T, String>;
 
-type ScriptID = u64;
+pub type ScriptID = u64;
 /*
 macro_rules! setup_python_hook {
     ($ss:expr, $sid:expr, $f:ident [ $( { $pname:ident : $ptype:ty = $detail:tt } )* ]) => {
@@ -31,15 +31,19 @@ impl PythonInterpreter {
         }
     }
 
-    /// This is a helper function that appends `.` to `sys.path` to allow relative python script imports.
+    /// This is a helper function that appends a path to `sys.path` to allow imports from other locations.
     /// This doesn't happen by default, for safety reasons.
-    pub fn enable_local_module_imports(&mut self) -> InterpreterResult<()> {
+    pub fn include(&mut self, path: &'static str) -> InterpreterResult<()> {
         let python = self.gil_guard.python();
-        python.run("import sys\nsys.path.append('.')", None, None);
-        Ok(())
+        //Note: Potential injection vulnerability. With a &'static str it shouldn't be a problem though.
+        let command = format!("import sys\nsys.path.append(\"{}\")", path);
+        match python.run(command.as_str(), None, None) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Error adding include path: {:?}", e))
+        }
     }
 
-    pub fn load_file(&mut self, name: &str) -> InterpreterResult<ScriptID> {
+    pub fn load_module(&mut self, name: &str) -> InterpreterResult<ScriptID> {
         let python = self.gil_guard.python();
         match python.import(name) {
             Ok(module) => {
@@ -107,7 +111,7 @@ impl PythonInterpreter {
         let module = self.modules.get_mut(&script).unwrap();
         match python.run(statement, Some(&module.dict(python)), None) {
             Ok(()) => Ok(()),
-            Err(_) => Err(String::from("An error occured!"))
+            Err(e) => Err(format!("Error when running '{}': {:?}", statement, e))
         }
     }
 

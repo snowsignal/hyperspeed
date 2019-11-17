@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-#![feature(duration_float)]
+#![feature(try_from)]
 #![feature(trait_alias)]
 
 extern crate specs;
@@ -10,6 +10,7 @@ extern crate specs_derive;
 #[macro_use]
 extern crate cascade;
 extern crate tokio;
+extern crate bytes;
 #[macro_use]
 pub extern crate cpython;
 

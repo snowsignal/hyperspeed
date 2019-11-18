@@ -9,6 +9,7 @@ extern crate shred_derive;
 extern crate specs_derive;
 #[macro_use]
 extern crate cascade;
+extern crate futures;
 extern crate tokio;
 extern crate bytes;
 #[macro_use]

@@ -13,7 +13,6 @@ use crate::ecs::GameUpdate;
 use std::convert::TryFrom;
 use std::sync::{Arc, Mutex};
 
-pub type NetworkResult<T> =  Result<T, Box<dyn std::error::Error>>;
 
 pub struct ClientMessage {
     pub bytes: BytesMut

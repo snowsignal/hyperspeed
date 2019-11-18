@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use tokio::prelude::*;
 use tokio::prelude::stream::ForEach;
 use bytes::{Bytes, BytesMut};
-use tokio::sync::mpsc::{channel, Receiver, Sender, unbounded_channel, UnboundedReceiver, UnboundedSender};
+use futures::sync::mpsc::{channel, Receiver, Sender, unbounded, UnboundedReceiver, UnboundedSender};
 use std::fmt::Debug;
 use std::thread;
 use std::thread::JoinHandle;
@@ -13,38 +13,52 @@ use crate::ecs::GameUpdate;
 use std::convert::TryFrom;
 use std::sync::{Arc, Mutex};
 
-
+/// A wrapper for a binary packet sent to or from the server socket.
 pub struct ClientMessage {
     pub bytes: BytesMut
 }
 
+/// A wrapper type that maps clients to their address and the channel
+/// to communicate with them.
 pub type ClientMap<M> = HashMap<ClientID, (SocketAddr, UnboundedSender<M>)>;
 
+/// A wrapper type that puts a client map in an arc mutex pointer so
+/// it can be accessed and modified by multiple threads.
 pub type SharedClientMap<M> = Arc<Mutex<ClientMap<M>>>;
 
+/// A client identifier number, used to represent the UID (Unique Identifier) for each client.
 pub type ClientID = u32;
 
+/// A set of traits required for any message type.
 pub trait Message = 'static + Send + TryFrom<ClientMessage, Error=()> + Into<ClientMessage> + Debug;
 
+/// A TCP socket that serializes and deserializes messages automatically
 pub struct MessageSocket<M: Message> {
     _pd: PhantomData<M>,
     socket: TcpStream,
     buffer: BytesMut
 }
 
+/// A client future that processes a client connection and
+/// communicates with a server.
 pub struct Client<M: Message> {
     socket: MessageSocket<M>,
+    id: ClientID,
     server_tx: UnboundedSender<M>,
-    server_rx: UnboundedReceiver<M>
+    server_rx: UnboundedReceiver<M>,
+    shared_client_map: SharedClientMap<M>,
 }
 
+/// A map of clients to messages from that client.
 #[derive(Debug)]
 pub struct ClientInput<M: Message> {
     input: HashMap<ClientID, Vec<M>>
 }
 
+/// A communication channel with the server.
 pub struct ServerHandle<M: Message>(pub UnboundedReceiver<ClientInput<M>>, pub UnboundedSender<GameUpdate>, pub JoinHandle<()>);
 
+/// A helper class for server generation
 pub struct ServerBuilder<M: Message> {
     _pd: PhantomData<M>,
     thread_cap: u16,
@@ -52,13 +66,25 @@ pub struct ServerBuilder<M: Message> {
     port: u16
 }
 
+/// A struct that handles multi-client networking.
 pub struct Server<M: Message> {
     thread_cap: u16,
     address: SocketAddr,
 
     listener: TcpListener,
     clients: SharedClientMap<M>,
-    messages: UnboundedReceiver<M>,
+    messages: UnboundedReceiver<M>
+}
+
+static mut CLIENT_ID_COUNTER: ClientID = 0;
+
+fn get_id(socket: &mut TcpStream) -> ClientID {
+    // This only gets called from one thread, so there won't be any data racing.
+    // In other words this (shouldn't) ever panic.
+    unsafe {
+        CLIENT_ID_COUNTER += 1;
+        CLIENT_ID_COUNTER - 1
+    }
 }
 
 impl<M: Message> ServerBuilder<M> {
@@ -81,12 +107,10 @@ impl<M: Message> ServerBuilder<M> {
             address: socket_addr,
             listener: TcpListener::bind(&socket_addr).unwrap(),
             clients: Arc::new(Mutex::new(HashMap::new())),
-            messages: unbounded_channel().1,
+            messages: unbounded().1,
         }
     }
 }
-
-fn get_id(socket: &mut TcpStream) -> ClientID { 0 }
 
 impl<M: Message> Server<M> {
     pub fn new() -> ServerBuilder<M> {
@@ -100,23 +124,32 @@ impl<M: Message> Server<M> {
     }
 
     /// Starts a new thread with Tokio running the server processes. Returns a
-    /// communication interface with the server
+    /// communication interface with the server, `ServerHandle`
     pub fn run(mut self) -> ServerHandle<M> {
-        let (client_input_tx, client_input_rx) = unbounded_channel::<ClientInput<M>>();
-        let (server_tx, server_rx) = unbounded_channel::<M>();
-        let (server2_tx, server2_rx) = unbounded_channel::<M>();
-        let (game_tx, game_rx) = unbounded_channel::<GameUpdate>();
+        let (client_input_tx, client_input_rx) = unbounded::<ClientInput<M>>();
+        let (server_tx, server_rx) = unbounded::<M>();
+        let (game_tx, game_rx) = unbounded::<GameUpdate>();
         let shared_client_map = self.clients.clone();
+        let hc_client_map = shared_client_map.clone();
+        thread::spawn(|| Server::handle_channels(server_rx, hc_client_map));
         let server_process = self.listener.incoming().for_each(move |mut socket| {
             let id = get_id(&mut socket);
-            let mut shared_client_map = shared_client_map.lock().unwrap();
-            let (tx, rx) = unbounded_channel();
-            shared_client_map.insert(id, (socket.local_addr().unwrap(), tx));
-            tokio::spawn(Client::new(socket, rx, server2_tx.clone()));
+            let (tx, rx) = unbounded();
+            {
+                let mut shared_client_map = shared_client_map.lock().unwrap();
+                shared_client_map.insert(id, (socket.local_addr().unwrap(), tx));
+            }
+            tokio::spawn(Client::new(socket, id, shared_client_map.clone(),rx, server_tx.clone()));
              Ok(())
         }).map_err(|e| ()); //TODO: Do something with error
         let handle = thread::spawn(move || tokio::run(server_process));
         ServerHandle(client_input_rx, game_tx, handle)
+    }
+
+    fn handle_channels(server_rx: UnboundedReceiver<M>, client_map: SharedClientMap<M>) {
+        loop {
+            thread::park()
+        }
     }
 }
 
@@ -182,11 +215,13 @@ impl<M: Message> Sink for MessageSocket<M> {
 }
 
 impl<M: Message> Client<M> {
-    pub fn new(socket: TcpStream, server_rx: UnboundedReceiver<M>, server_tx: UnboundedSender<M>) -> Client<M> {
+    pub fn new(socket: TcpStream, id: ClientID, shared_client_map: SharedClientMap<M>, server_rx: UnboundedReceiver<M>, server_tx: UnboundedSender<M>) -> Client<M> {
         Client {
             socket: MessageSocket::new(socket),
+            id,
             server_rx,
-            server_tx
+            server_tx,
+            shared_client_map
         }
     }
 }
@@ -219,9 +254,19 @@ impl<M: Message> Future for Client<M> {
 
         while let Ok(Async::Ready(msg)) = self.socket.poll() {
             if let Some(msg) = msg {
-                self.server_tx.send(msg);
+                match self.server_tx.unbounded_send(msg) {
+                    Ok(_) => (),
+                    Err(e) => println!("{}", e)
+                }
             }
         }
         Ok(Async::NotReady)
+    }
+}
+
+impl<M: Message> Drop for Client<M> {
+    fn drop(&mut self) {
+        self.socket.close().unwrap();
+        self.shared_client_map.lock().unwrap().remove(&self.id);
     }
 }
